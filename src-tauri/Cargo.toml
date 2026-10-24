@@ -22,6 +22,10 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 文件对话框（导入图片 / 导出 CSV）
+rfd = "0.15"
+base64 = "0.22"
+mime_guess = "2"
 
 # 图像解码与处理（PNG/JPEG/TIFF/BMP/WebP）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "webp", "gif"] }
