@@ -46,26 +46,30 @@ export function nextId(): number {
  * x 轴需要 2 个 axis="x" 的点，y 轴需要 2 个 axis="y" 的点。
  */
 export function computeCalibration(axisPoints: AxisPoint[]) {
-  const xs = axisPoints.filter((p) => p.axis === "x");
-  const ys = axisPoints.filter((p) => p.axis === "y");
+  // 各取最后两个点：用户重复标定时以最近一次为准
+  const xs = axisPoints.filter((p) => p.axis === "x").slice(-2);
+  const ys = axisPoints.filter((p) => p.axis === "y").slice(-2);
 
   let xPerPixel: number | null = null;
   let xOrigin = 0;
   if (xs.length >= 2) {
     const dp = xs[1].screen.x - xs[0].screen.x;
-    if (Math.abs(dp) < 1e-9) return null;
-    xPerPixel = (xs[1].value - xs[0].value) / dp;
-    xOrigin = xs[0].screen.x;
+    // x 轴退化时不影响 y 轴标定
+    if (Math.abs(dp) >= 1e-9) {
+      xPerPixel = (xs[1].value - xs[0].value) / dp;
+      xOrigin = xs[0].screen.x;
+    }
   }
 
   let yPerPixel: number | null = null;
   let yOrigin = 0;
   if (ys.length >= 2) {
     const dp = ys[1].screen.y - ys[0].screen.y;
-    if (Math.abs(dp) < 1e-9) return null;
-    yPerPixel = (ys[1].value - ys[0].screen.y * 0) / dp; // placeholder, replaced below
-    yPerPixel = (ys[1].value - ys[0].value) / dp;
-    yOrigin = ys[0].screen.y;
+    // y 轴退化时不影响 x 轴标定
+    if (Math.abs(dp) >= 1e-9) {
+      yPerPixel = (ys[1].value - ys[0].value) / dp;
+      yOrigin = ys[0].screen.y;
+    }
   }
 
   return {

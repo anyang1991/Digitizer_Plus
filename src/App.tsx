@@ -1,7 +1,7 @@
 // Digitizer Plus — 主界面（M1）：导入图片 → 标定 → 取点 → 导出
 // 设计理念受 Engauge Digitizer 启发（详见 app-meta.ts），实现为独立原创。
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ImageCanvas from "./ImageCanvas";
 import {
@@ -83,8 +83,18 @@ export default function App() {
     if (mode === "curve-point") {
       const p: DigitizedPoint = { id: nextId(), screen: img, graph: null };
       setPoints((prev) => recomputeGraphs([...prev, p], cal));
-      setStatus(`已添加第 ${points.length + 1} 个数据点`);
+      const n = points.length + 1;
+      setStatus(
+        cal?.xDefined || cal?.yDefined
+          ? `已添加第 ${n} 个数据点`
+          : `已添加第 ${n} 个数据点（当前为像素坐标，完成标定后自动换算）`,
+      );
     }
+  };
+
+  // 右键删除最近的数据点（在数据列表上时删除指定点）
+  const deletePoint = (id: number) => {
+    setPoints((prev) => prev.filter((p) => p.id !== id));
   };
 
   // 提交轴点坐标值
@@ -135,9 +145,39 @@ export default function App() {
     }
   };
 
+  // 拖拽导入图片
+  const [dragOver, setDragOver] = useState(false);
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    try {
+      // Web 端读取文件字节，经 Rust 校验解码并返回统一 ImagePayload
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      const payload = await invoke<ImageInfo>("validate_image", {
+        name: file.name,
+        mime: file.type || "image/png",
+        dataBase64: btoa(bin),
+      });
+      setImage(payload);
+      setAxisPoints([]);
+      setPoints([]);
+      setPendingAxis(null);
+      setStatus(`已导入 ${payload.name} (${payload.width}×${payload.height}) — 先用 X/Y 轴点标定坐标`);
+    } catch (err) {
+      setStatus(`导入失败: ${err}`);
+    }
+  };
+
   // 键盘快捷键
-  const onKey = (e: React.KeyboardEvent) => {
-    if (pendingAxis && (e.key === "Enter" || e.key === "Escape")) {
+  const onKey = (e: React.KeyboardEvent) => {    if (pendingAxis && (e.key === "Enter" || e.key === "Escape")) {
       if (e.key === "Enter") submitAxisValue();
       else setPendingAxis(null);
       return;
@@ -152,6 +192,35 @@ export default function App() {
       undoLast();
     }
   };
+
+  // E2E 测试钩子（仅开发模式暴露）
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as never as Record<string, unknown>).__DIGITIZER_E2E__ = {
+      // 直接注入已导入的图片状态
+      loadImage(info: ImageInfo) {
+        setImage(info);
+        setAxisPoints([]);
+        setPoints([]);
+        setPendingAxis(null);
+      },
+      // 模拟用户在图像坐标处点击（走与真实点击完全相同的 handleImageClick 逻辑）
+      simulateClick(imgX: number, imgY: number) {
+        handleImageClick({ x: imgX, y: imgY });
+      },
+      // 读取当前应用状态
+      getState() {
+        const c = computeCalibration(axisPoints);
+        return {
+          xDefined: c?.xDefined ?? false,
+          yDefined: c?.yDefined ?? false,
+          points,
+          status,
+          csv: toCsv(points),
+        };
+      },
+    };
+  });
 
   // Canvas 叠加层：绘制标定点与数据点
   const renderOverlay = useCallback(
@@ -182,7 +251,19 @@ export default function App() {
   const yDefined = cal?.yDefined ?? false;
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100" onKeyDown={onKey} tabIndex={-1}>
+    <div
+      className={"flex h-screen flex-col bg-neutral-950 text-neutral-100 " + (dragOver ? "ring-2 ring-inset ring-sky-500" : "")}
+      onKeyDown={onKey}
+      tabIndex={-1}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragOver(false);
+      }}
+      onDrop={handleDrop}
+    >
       {/* 顶栏 */}
       <header className="flex items-center gap-3 border-b border-neutral-800 px-4 py-2.5">
         <h1 className="text-base font-bold tracking-tight">
@@ -302,8 +383,13 @@ export default function App() {
                 .slice()
                 .reverse()
                 .map((p) => (
-                  <li key={p.id} className="flex justify-between rounded px-1.5 py-1 hover:bg-neutral-800">
-                    <span className="text-neutral-500">#{p.id}</span>
+                  <li
+                    key={p.id}
+                    className="group flex cursor-pointer items-center justify-between rounded px-1.5 py-1 hover:bg-neutral-800"
+                    onClick={() => deletePoint(p.id)}
+                    title="点击删除此点"
+                  >
+                    <span className="text-neutral-500 group-hover:text-red-400">#{p.id}</span>
                     <span>
                       {p.graph ? `${fmt(p.graph.x)}, ${fmt(p.graph.y)}` : "px (未标定)"}
                     </span>

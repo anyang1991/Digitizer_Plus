@@ -215,6 +215,28 @@ struct ImagePayload {
     data_base64: String,
 }
 
+/// 校验前端拖拽传入的图片字节，返回统一 ImagePayload
+#[tauri::command]
+fn validate_image(
+    name: String,
+    mime: String,
+    data_base64: String,
+) -> Result<ImagePayload, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&data_base64)
+        .map_err(|e| format!("base64 解码失败: {}", e))?;
+    let img = image::load_from_memory(&bytes).map_err(|e| format!("无法解析图片: {}", e))?;
+    let (w, h) = (img.width(), img.height());
+    Ok(ImagePayload {
+        name,
+        mime: if mime.is_empty() { "image/png".into() } else { mime },
+        width: w,
+        height: h,
+        data_base64: data_base64,
+    })
+}
+
 /// 将 CSV 文本保存到用户选择的文件
 #[tauri::command]
 fn export_csv_file(csv: String) -> Result<String, String> {
@@ -235,6 +257,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             import_image,
+            validate_image,
             export_csv_file
         ])
         .run(tauri::generate_context!())

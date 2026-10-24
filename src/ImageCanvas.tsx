@@ -101,7 +101,9 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay }: P
   }, [draw]);
 
   const screenToImage = (clientX: number, clientY: number): ScreenPoint => {
-    const rect = canvasRef.current!.getBoundingClientRect();
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
     return {
       x: (clientX - rect.left - pan.x) / scale,
       y: (clientY - rect.top - pan.y) / scale,
@@ -110,7 +112,9 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay }: P
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    const rect = canvasRef.current!.getBoundingClientRect();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;

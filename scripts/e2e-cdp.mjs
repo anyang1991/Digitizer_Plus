@@ -1,11 +1,61 @@
-// Digitizer Plus M1 E2E：通过 CDP 在真实 WebView 中驱动 UI
+// Digitizer Plus M1 全流程 E2E：在真实 WebView 中模拟用户完整操作
+// 流程：注入测试图 → X 轴标定(2点) → Y 轴标定(2点) → 曲线取点(3点)
+//       → 验证坐标换算 → 验证点删除 → 验证 CSV 内容
 // 前置：应用以 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 运行
+import zlib from "node:zlib";
+
 const CDP_PORT = 9222;
+
+/** 用 Node 内置 zlib 生成一张 400x300 的有效 PNG（白色，左下/右上各一个黑块） */
+function makeTestPng() {
+  const W = 400, H = 300;
+  const raw = Buffer.alloc(H * (1 + W * 3));
+  for (let y = 0; y < H; y++) {
+    const row = y * (1 + W * 3);
+    raw[row] = 0; // filter: none
+    for (let x = 0; x < W; x++) {
+      const off = row + 1 + x * 3;
+      const dark =
+        (x >= 18 && x < 26 && y >= H - 28 && y < H - 20) || // 左下黑块
+        (x >= W - 26 && x < W - 18 && y >= 18 && y < 26); // 右上黑块
+      raw[off] = raw[off + 1] = raw[off + 2] = dark ? 0 : 255;
+    }
+  }
+  const crcTable = [...Array(256)].map((_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(W, 0);
+  ihdr.writeUInt32BE(H, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: RGB
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 const list = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json();
 const page = list.find((t) => t.type === "page");
 if (!page) throw new Error("未找到应用页面");
-console.log("target:", page.title || page.url);
+console.log("target:", page.url);
 
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
@@ -42,52 +92,86 @@ let failures = 0;
 function check(name, actual, expect) {
   const ok = String(actual) === String(expect);
   if (!ok) failures++;
-  console.log(`${ok ? "✅ PASS" : "❌ FAIL"} ${name}: got "${actual}"${ok ? "" : ` (expected "${expect}")`}`);
+  console.log(`${ok ? "✅" : "❌"} ${name}: got "${actual}"${ok ? "" : ` (expected "${expect}")`}`);
 }
 
-// 注入一个 2x2 红色测试图，模拟导入完成后的状态（不依赖系统文件对话框）
-async function injectTestImage() {
-  return evalJs(`(async () => {
-    // 生成 200x100 的测试图：白底 + 左下/右上各一个黑点
-    const c = document.createElement('canvas');
-    c.width = 200; c.height = 100;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,200,100);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(20, 80, 4, 4);   // 期望图坐标 (1, 1)
-    ctx.fillRect(160, 20, 4, 4);  // 期望图坐标 (8, 9)
-    // 直接设置 React 状态：通过导入按钮不可行（系统对话框），改为模拟已导入
-    window.__testImage = c.toDataURL('image/png');
-    return 'ok';
+// 通过调试钩子注入 Node 生成的测试图（400x300）
+const png = makeTestPng();
+const b64 = png.toString("base64");
+await evalJs(`window.__pendingImage = {
+  name: "e2e-test.png", mime: "image/png", width: 400, height: 300,
+  dataBase64: "${b64}",
+}`);
+const injected = await evalJs(`(async () => {
+  if (!window.__DIGITIZER_E2E__) return "hook-missing";
+  window.__DIGITIZER_E2E__.loadImage(window.__pendingImage);
+  await new Promise(r => setTimeout(r, 400));
+  return "loaded";
+})()`);
+check("测试图注入", injected, "loaded");
+
+// --- 1. X 轴标定：图像 (100,250)→0 与 (300,250)→10 ---
+await evalJs(`(async () => {
+  [...document.querySelectorAll('nav button')].find(b => b.textContent.includes('X 轴点')).click();
+  await new Promise(r => setTimeout(r, 100));
+})()`);
+async function axisClickAndSubmit(imgX, imgY, value) {
+  await evalJs(`(async () => {
+    window.__DIGITIZER_E2E__.simulateClick(${imgX}, ${imgY});
+    await new Promise(r => setTimeout(r, 120));
+  })()`);
+  await evalJs(`(async () => {
+    const input = document.querySelector('main input');
+    if (!input) throw new Error('轴值输入框未出现');
+    const setVal = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setVal.call(input, '${value}');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 60));
+    [...document.querySelectorAll('main button')].find(b => b.textContent === '确定').click();
+    await new Promise(r => setTimeout(r, 120));
   })()`);
 }
+await axisClickAndSubmit(100, 250, "0");
+await axisClickAndSubmit(300, 250, "10");
+check("X 轴已标定", await evalJs(`window.__DIGITIZER_E2E__.getState().xDefined`), "true");
 
-// --- 测试 1: 顶栏与四个模式按钮渲染 ---
-check("应用标题", await evalJs(`document.querySelector('h1')?.textContent.trim()`), "DigitizerPlus");
-check("模式按钮数", await evalJs(`document.querySelectorAll('nav button').length`), "5");
-check("导入按钮存在", await evalJs(`!![...document.querySelectorAll('button')].find(b=>b.textContent.includes('导入图片'))`), "true");
-
-// --- 测试 2: 状态栏初始提示 ---
-check("状态栏提示", await evalJs(`document.querySelector('footer span')?.textContent`), "导入一张图表图片开始");
-
-// --- 测试 3: 标定数学（前端核心逻辑，在页面上下文内验证） ---
-const calib = await evalJs(`(async () => {
-  // 复制 core.ts 的算法在页面内验证：x 100px→0,500px→8; y 300px→5,100px→25
-  const xs = [{s:100,v:0},{s:500,v:8}], ys = [{s:300,v:5},{s:100,v:25}];
-  const xpp = (xs[1].v - xs[0].v) / (xs[1].s - xs[0].s);
-  const ypp = (ys[1].v - ys[0].v) / (ys[1].s - ys[0].s);
-  const gx = (300 - xs[0].s) * xpp;
-  const gy = (200 - ys[0].s) * ypp;
-  return JSON.stringify({ xpp, ypp, gx, gy });
+// --- 2. Y 轴标定：图像 (100,250)→0 与 (100,50)→20 ---
+await evalJs(`(async () => {
+  [...document.querySelectorAll('nav button')].find(b => b.textContent.includes('Y 轴点')).click();
+  await new Promise(r => setTimeout(r, 100));
 })()`);
-const c = JSON.parse(calib);
-check("x 比例", c.xpp, "0.02");
-check("y 比例(向下为负)", c.ypp, "-0.1");
-check("屏幕(300,200)的图坐标", `${c.gx},${c.gy}`, "4,10");
+await axisClickAndSubmit(100, 250, "0");
+await axisClickAndSubmit(100, 50, "20");
+const st1 = await evalJs(`JSON.stringify(window.__DIGITIZER_E2E__.getState())`);
+check("Y 轴已标定", JSON.parse(st1).yDefined, "true");
+check("标定完成提示", JSON.parse(st1).status.includes("标定完成"), "true");
 
-// --- 测试 4: 无图时模式按钮禁用 ---
-check("无图时按钮禁用", await evalJs(`document.querySelectorAll('nav button')[1].disabled`), "true");
+// --- 3. 取点：图像 (150,150) (200,100) (250,150) ---
+await evalJs(`(async () => {
+  [...document.querySelectorAll('nav button')].find(b => b.textContent.includes('取点')).click();
+  await new Promise(r => setTimeout(r, 100));
+})()`);
+for (const [px, py] of [[150, 150], [200, 100], [250, 150]]) {
+  await evalJs(`(async () => {
+    window.__DIGITIZER_E2E__.simulateClick(${px}, ${py});
+    await new Promise(r => setTimeout(r, 100));
+  })()`);
+}
+check("取点数量", await evalJs(`window.__DIGITIZER_E2E__.getState().points.length`), "3");
+// 换算：x=(imgX-100)*0.05; y=(imgY-250)*(-0.1)
+// 点(200,100): x=5, y=(-150)*(-0.1)=15
+check("坐标换算", await evalJs(`window.__DIGITIZER_E2E__.getState().points.map(p => p.graph.x + "," + p.graph.y).join(" | ")`), "2.5,10 | 5,15 | 7.5,10");
+
+// --- 4. 列表点击删除最新点 ---
+await evalJs(`(async () => {
+  document.querySelector('aside ul li').click();
+  await new Promise(r => setTimeout(r, 100));
+})()`);
+check("删除后数量", await evalJs(`window.__DIGITIZER_E2E__.getState().points.length`), "2");
+
+// --- 5. CSV 内容 ---
+check("CSV 内容", await evalJs(`window.__DIGITIZER_E2E__.getState().csv`), "x,y\n2.5,10\n5,15\n");
 
 ws.close();
-console.log(failures === 0 ? "\n🎉 M1 E2E 全部通过" : `\n💥 ${failures} 项失败`);
+console.log(failures === 0 ? "\n🎉 全流程 E2E 通过" : `\n💥 ${failures} 项失败`);
 process.exit(failures === 0 ? 0 : 1);
