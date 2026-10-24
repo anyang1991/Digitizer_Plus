@@ -10,13 +10,15 @@ interface Props {
     ctx: CanvasRenderingContext2D,
     toScreen: (img: ScreenPoint) => ScreenPoint,
   ) => void;
+  /** 视图（scale/pan）每次提交后回调（权威值，E2E/未来标尺用） */
+  onViewState?: (v: { scale: number; pan: ScreenPoint }) => void;
 }
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 40;
 
 /** 视口状态：图像坐标 → 画布坐标 = (img * scale) + pan */
-export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay }: Props) {
+export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay, onViewState }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -56,6 +58,8 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay }: P
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
     if (!canvas || !wrap) return;
+    // 上报视图参数（权威值：与绘制同帧的 scale/pan）
+    onViewState?.({ scale, pan });
     const dpr = window.devicePixelRatio || 1;
     const w = wrap.clientWidth;
     const h = wrap.clientHeight;
@@ -91,7 +95,7 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay }: P
 
   useEffect(() => {
     draw();
-  }, [draw]);
+  }, [draw, onViewState]);
 
   // 窗口尺寸变化重绘
   useEffect(() => {
@@ -119,7 +123,9 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay }: P
     const my = e.clientY - rect.top;
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
-    // 以鼠标位置为锚点缩放
+    if (newScale === scale) return;
+    // 以鼠标位置为锚点缩放：scale 与 pan 必须同帧更新，
+    // 否则短暂出现"新 scale + 旧 pan"的中间态，点击换算会抖动
     setPan({
       x: mx - ((mx - pan.x) * newScale) / scale,
       y: my - ((my - pan.y) * newScale) / scale,

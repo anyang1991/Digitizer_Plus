@@ -1,7 +1,7 @@
 // Digitizer Plus — 主界面（M1）：导入图片 → 标定 → 取点 → 导出
 // 设计理念受 Engauge Digitizer 启发（详见 app-meta.ts），实现为独立原创。
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ImageCanvas from "./ImageCanvas";
 import {
@@ -32,6 +32,14 @@ export default function App() {
   const [pendingAxis, setPendingAxis] = useState<{ axis: "x" | "y"; screen: ScreenPoint } | null>(null);
   const [axisInput, setAxisInput] = useState("");
   const [status, setStatus] = useState("导入一张图表图片开始");
+  // E2E 读取画布视图参数（scale/pan）用；ImageCanvas 绘制帧同步回调（权威值）
+  const viewStateRef = useRef<{ scale: number; pan: { x: number; y: number } }>({ scale: 1, pan: { x: 0, y: 0 } });
+  const onViewState = useCallback(
+    (v: { scale: number; pan: { x: number; y: number } }) => {
+      viewStateRef.current = v;
+    },
+    [],
+  );
 
   const cal = useMemo(() => computeCalibration(axisPoints), [axisPoints]);
 
@@ -219,6 +227,11 @@ export default function App() {
           csv: toCsv(points),
         };
       },
+      // E2E 需要的画布视图参数（fit 后的 scale 与 pan）
+      getView() {
+        // 通过画布 ref 的闭包不可达；由 ImageCanvas 经自定义事件上报
+        return viewStateRef.current;
+      },
     };
   });
 
@@ -321,6 +334,7 @@ export default function App() {
             imageSrc={image ? `data:${image.mime};base64,${image.dataBase64}` : null}
             onImageClick={handleImageClick}
             renderOverlay={renderOverlay}
+            onViewState={onViewState}
           />
           {/* 轴点数值输入浮层 */}
           {pendingAxis && (
