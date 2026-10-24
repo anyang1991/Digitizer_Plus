@@ -1,0 +1,39 @@
+[package]
+name = "digitizer-plus"
+version = "0.1.0"
+description = "Digitizer Plus - a modern, beautiful graph digitizer for science"
+authors = ["Digitizer Plus Contributors"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "digitizer_plus_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 图像解码与处理（PNG/JPEG/TIFF/BMP/WebP）
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "webp", "gif"] }
+# 快速傅里叶变换：相位相关自动找点（致敬 Engauge Digitizer 的 Point Match）
+rustfft = "6"
+# 数值计算（坐标变换、样条插值）
+nalgebra = "0.33"
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
