@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ImageCanvas from "./ImageCanvas";
+import UpdateButton from "./UpdateButton";
 import {
   activeKind,
   computeCalibration,
@@ -473,6 +474,7 @@ export default function App() {
         >
           导出 CSV
         </button>
+        <UpdateButton />
         <div className="ml-auto text-xs text-neutral-500">Win · macOS · Linux</div>
       </header>
 

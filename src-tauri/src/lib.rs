@@ -13,6 +13,12 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! Digitizer Plus core is alive.", name)
 }
 
+/// 应用启动时的版本信息（供前端日志显示）
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// 打开图片文件对话框，返回 base64 编码的图片与文件名
 #[tauri::command]
 fn import_image() -> Result<ImagePayload, String> {
@@ -90,8 +96,11 @@ fn export_csv_file(csv: String) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            app_version,
             import_image,
             validate_image,
             export_csv_file

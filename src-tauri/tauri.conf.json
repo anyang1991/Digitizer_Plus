@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,5 +35,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4QUIxREYzNUM0OUE4RUUKUldUdXFFbGM4eDJyMk10YWJXempJK3lSRkd3YWdVdG1hTmowSDFtY2I0dTNOT3dqK2J4ZkZ2QkoK",
+      "endpoints": [
+        "https://github.com/anyang1991/Digitizer_Plus/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
