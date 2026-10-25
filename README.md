@@ -16,7 +16,12 @@
 
 ## 下载
 
-前往 [Releases](https://github.com/anyang1991/Digitizer_Plus/releases/latest) 获取 Windows 安装包（）与 macOS 镜像（Intel/Apple Silicon ）。应用内置自动更新，发新版本后会提示一键升级。
+前往 [Releases](https://github.com/anyang1991/Digitizer_Plus/releases/latest) 获取安装包：
+
+- **Windows**：`Digitizer.Plus_x.y.z_x64-setup.exe`（安装版）或 `.msi`
+- **macOS**：`Digitizer.Plus_x.y.z_x64.dmg`（Intel）/ `Digitizer.Plus_x.y.z_aarch64.dmg`（Apple Silicon）
+
+应用内置自动更新，发新版本后会提示一键升级。
 
 ## 技术栈
 
