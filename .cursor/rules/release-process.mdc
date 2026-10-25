@@ -1,0 +1,37 @@
+---
+description: Digitizer Plus 发版流程 — 用户要求发版/发布/更新版本时，全程自动完成（打 tag、监控构建、验证 Release），不需用户手动操作
+globs:
+alwaysApply: true
+---
+
+# 发版与自动更新流程（2026-10-25 已打通并验证）
+
+用户原话："你记录一下这件事 以后也自己搞"——即发版全程由 agent 自动执行。
+
+## 发版步骤（用户说"发个版"/"更新版本"时照此执行）
+
+1. 确认工作区干净、代码已推送 main
+2. 提升版本号（三处同步）：
+   - `src-tauri/tauri.conf.json` 的 `version`
+   - `src-tauri/Cargo.toml` 的 `version`（并更新 Cargo.lock）
+   - `package.json` 的 `version`
+3. 提交版本号变更，打 tag 并推送：
+   ```bash
+   git tag vX.Y.Z && git push origin main vX.Y.Z
+   ```
+4. GitHub Actions（`.github/workflows/release.yml`）自动构建 Win+macOS 双架构签名包并发布 Release + latest.json，约 10 分钟
+5. 监控构建直到完成，验证 Release 资产含 `latest.json`
+
+## 关键设施（勿重复配置）
+
+- 签名私钥：`.tauri/digitizer-plus.key`（无密码，gitignored，**已备份提醒过用户，勿泄露勿删除**）
+- Secret `TAURI_SIGNING_PRIVATE_KEY` 已设置在 GitHub 仓库
+- gh CLI 便携版：`.tools/gh-cli/gh.exe`（已下载）；git 凭证管理器存有 GitHub token（`git credential fill` 可取），用 `GH_TOKEN=$(git credential fill...|grep password|cut -d= -f2)` 环境变量方式调用 gh（直接 auth login 会因缺 read:org 报错，忽略之）
+- 下载 GitHub 资产需走代理 `export HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890`
+- 更新端点：`https://github.com/anyang1991/Digitizer_Plus/releases/latest/download/latest.json`
+
+## 验证要点
+
+- `gh release view vX.Y.Z` 应含 `latest.json` 与 `.sig` 签名文件
+- 已装用户（本机 `$LOCALAPPDATA/Digitizer Plus/digitizer-plus.exe`）启动 3 秒后静默检查；升级验证：新版发布后本地按钮应显示「⬆ 新版本」
+- E2E 测试套件（scripts/e2e-*.mjs）需应用以 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` 运行
