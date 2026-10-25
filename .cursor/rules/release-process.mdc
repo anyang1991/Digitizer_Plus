@@ -35,3 +35,8 @@ alwaysApply: true
 - `gh release view vX.Y.Z` 应含 `latest.json` 与 `.sig` 签名文件
 - 已装用户（本机 `$LOCALAPPDATA/Digitizer Plus/digitizer-plus.exe`）启动 3 秒后静默检查；升级验证：新版发布后本地按钮应显示「⬆ 新版本」
 - E2E 测试套件（scripts/e2e-*.mjs）需应用以 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` 运行
+
+## 功能范围决策（2026-10-25）
+
+- **M4（自动提取）与 M6（PDF 导入/多格式导出）明确不做**——用户原话"有人提再说 基本功能就够用"。除非用户主动要求，不要实现或提议这两个里程碑。README 中保留 ⏳ 状态即可。
+
