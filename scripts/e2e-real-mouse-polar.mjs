@@ -1,7 +1,7 @@
 // 真实鼠标事件流 E2E：不借助 __DIGITIZER_E2E__ 钩子的 simulateClick，
 // 而是通过 CDP Input.dispatchMouseEvent 在窗口坐标注入真实鼠标事件，
 // 验证 Canvas 命中检测（含缩放/平移变换）在多类型 UI 下工作正常。
-// 前置：应用运行且 CDP 9222 可用。测试图 400x300，默认 1:1 显示。
+// 前置：应用运行且 CDP 9222 可用。测试图 400x300，画布 contain 适配（含 40px 边距）。
 import zlib from "node:zlib";
 
 const list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
@@ -73,27 +73,28 @@ await evalJs(`(async () => {
   await new Promise(r => setTimeout(r, 500));
 })()`);
 
-// 通过 getBoundingClientRect 找 canvas 与图像 1:1 映射
+// 通过 getBoundingClientRect 找 canvas 在窗口中的位置
 const geom = await evalJs(`(() => {
   const c = document.querySelector('canvas');
   const r = c.getBoundingClientRect();
-  const scale = window.devicePixelRatio || 1;
-  return { left: r.left, top: r.top, cssW: r.width, cssH: r.height, scale };
+  return { left: r.left, top: r.top, cssW: r.width, cssH: r.height, scale: window.devicePixelRatio || 1 };
 })()`);
 console.log("canvas 几何:", JSON.stringify(geom));
 
-// 视图初始为 contain 适配：显示比例 = min(cssW/W, cssH/H)，居中有偏移
-const fitScale = Math.min(geom.cssW / W, geom.cssH / H);
-const offX = (geom.cssW - W * fitScale) / 2;
-const offY = (geom.cssH - H * fitScale) / 2;
-console.log(`contain: scale=${fitScale.toFixed(3)} offset=(${offX},${offY})`);
-const toWindow = (ix, iy) => ({
-  wx: geom.left + offX + ix * fitScale,
-  wy: geom.top + offY + iy * fitScale,
-});
+// 视图初始为 contain 适配。应用含 40px 边距，实际 scale/pan 必须以
+// __DIGITIZER_E2E__.getView() 上报的权威值为准（与 e2e-real-mouse.mjs 一致），
+// 不能假设 min(cssW/W, cssH/H) 的无边距 contain。
+async function toWindow(ix, iy) {
+  const vp = JSON.parse(await evalJs(`JSON.stringify(window.__DIGITIZER_E2E__.getView())`));
+  // 取整：真实硬件鼠标只有整数像素，Chromium 对合成事件坐标取整会引入 0.5px 伪差
+  return {
+    wx: Math.round(geom.left + ix * vp.scale + vp.pan.x),
+    wy: Math.round(geom.top + iy * vp.scale + vp.pan.y),
+  };
+}
 
 async function mouseClick(ix, iy) {
-  const { wx, wy } = toWindow(ix, iy);
+  const { wx, wy } = await toWindow(ix, iy);
   for (const type of ["mousePressed", "mouseReleased"]) {
     await send("Input.dispatchMouseEvent", {
       type, x: wx, y: wy, button: "left", clickCount: 1,

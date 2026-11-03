@@ -268,6 +268,8 @@ export default function App() {
       else setPending(null);
       return;
     }
+    // 数值弹窗打开期间不响应模式快捷键，避免输入内容误触发模式切换
+    if (pending) return;
     const k = e.key.toLowerCase();
     if (k === "v") setMode("select");
     else if (k === "x" && chartType === "xy") setMode("axis-x");
@@ -438,6 +440,8 @@ export default function App() {
           onChange={(e) => {
             setChartType(e.target.value as ChartType);
             setMode("select");
+            // 切换图表类型后未提交的数值弹窗已失效，避免误路由到其他标定流程
+            setPending(null);
           }}
           className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm"
         >
