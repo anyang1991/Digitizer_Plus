@@ -1,6 +1,6 @@
 [package]
 name = "digitizer-plus"
-version = "0.1.0"
+version = "0.1.1"
 description = "Digitizer Plus - a modern, beautiful graph digitizer for science"
 authors = ["Digitizer Plus Contributors"]
 edition = "2024"
