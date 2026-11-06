@@ -25,6 +25,8 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay, onV
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState<ScreenPoint>({ x: 0, y: 0 });
   const panDrag = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+  /** 平移手势结束后浏览器仍会派发 click，需吞掉这一次以免误加数据点 */
+  const suppressClick = useRef(false);
   const [hoverImg, setHoverImg] = useState<ScreenPoint | null>(null);
 
   // 加载图片
@@ -91,7 +93,7 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay, onV
       );
     }
     renderOverlay?.(ctx, toScreen);
-  }, [scale, pan, renderOverlay]);
+  }, [scale, pan, renderOverlay, onViewState]);
 
   useEffect(() => {
     draw();
@@ -137,7 +139,11 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay, onV
     if (e.button === 1 || e.button === 2 || e.altKey || e.shiftKey) {
       // 中键/右键/Alt/Shift 拖拽平移
       panDrag.current = { startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y };
+      // 仅左键平移会在 mouseup 后派发 click；中键/右键不会，不能留下抑制标记
+      suppressClick.current = e.button === 0;
       e.preventDefault();
+    } else {
+      suppressClick.current = false;
     }
   };
 
@@ -156,7 +162,11 @@ export default function ImageCanvas({ imageSrc, onImageClick, renderOverlay, onV
   };
 
   const handleClick = (e: React.MouseEvent) => {
-    if (panDrag.current) return;
+    // mouseup 已在 click 之前清空 panDrag，因此必须依赖 suppressClick 判断是否为平移手势
+    if (panDrag.current || suppressClick.current || e.altKey || e.shiftKey) {
+      suppressClick.current = false;
+      return;
+    }
     onImageClick(screenToImage(e.clientX, e.clientY));
   };
 

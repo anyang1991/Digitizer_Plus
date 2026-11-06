@@ -260,16 +260,21 @@ export function getConverter(
   return computeCalibration(axisPoints, xScale, yScale);
 }
 
+/** 点是否具备可导出的有限图坐标（单轴未完成标定时 graph 含 NaN） */
+export function isExportable(p: DigitizedPoint, kind: CalibKind): boolean {
+  const g = p.graph;
+  if (!g || !Number.isFinite(g.x) || !Number.isFinite(g.y)) return false;
+  if (kind === "ternary" && !Number.isFinite(g.c ?? NaN)) return false;
+  return true;
+}
+
 /** CSV 序列化：按标定种类输出不同列 */
 export function toCsv(points: DigitizedPoint[], kind: CalibKind): string {
-  const finite = (v: number | undefined) => v !== undefined && Number.isFinite(v);
-  const rows = points
-    .filter((p) => p.graph && finite(p.graph.x) && finite(p.graph.y))
-    .map((p) => {
-      if (kind === "polar") return `${p.graph!.x},${p.graph!.y}`;
-      if (kind === "ternary") return `${p.graph!.x},${p.graph!.y},${p.graph!.c}`;
-      return `${p.graph!.x},${p.graph!.y}`;
-    });
+  const rows = points.filter((p) => isExportable(p, kind)).map((p) => {
+    if (kind === "polar") return `${p.graph!.x},${p.graph!.y}`;
+    if (kind === "ternary") return `${p.graph!.x},${p.graph!.y},${p.graph!.c}`;
+    return `${p.graph!.x},${p.graph!.y}`;
+  });
   const header = kind === "polar" ? "theta,r" : kind === "ternary" ? "a,b,c" : "x,y";
   return [header, ...rows].join("\n") + (rows.length ? "\n" : "");
 }

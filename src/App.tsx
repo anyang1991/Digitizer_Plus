@@ -6,18 +6,18 @@ import { invoke } from "@tauri-apps/api/core";
 import ImageCanvas from "./ImageCanvas";
 import UpdateButton from "./UpdateButton";
 import {
-  activeKind,
   computeCalibration,
   computePolar,
   computeTernary,
   fmt,
-  getConverter,
   graphText,
+  isExportable,
   nextId,
   screenToGraph,
   toCsv,
   type AxisPoint,
   type AxisScale,
+  type CalibKind,
   type DigitizedPoint,
   type DigitizeMode,
   type ImageInfo,
@@ -62,22 +62,21 @@ export default function App() {
     viewStateRef.current = v;
   }, []);
 
-  const kind = activeKind(axisPoints, polarRef, ternaryRef);
-  const converter = useMemo(
-    () => getConverter(axisPoints, polarRef, ternaryRef, xScale, yScale),
-    [axisPoints, polarRef, ternaryRef, xScale, yScale],
+  // 标定结果与数据种类统一由当前图表类型驱动，避免切换类型后 CSV 列名/点显示与面板不一致
+  const xyCal = useMemo(
+    () => (chartType === "xy" ? computeCalibration(axisPoints, xScale, yScale) : null),
+    [chartType, axisPoints, xScale, yScale],
   );
-  const xyCal = chartType === "xy" ? computeCalibration(axisPoints, xScale, yScale) : null;
-  const polarCal = chartType === "polar" ? computePolar(polarRef) : null;
-  const ternaryCal = chartType === "ternary" ? computeTernary(ternaryRef) : null;
-  const calibrated = !!(xyCal || polarCal || ternaryCal);
+  const polarCal = useMemo(() => (chartType === "polar" ? computePolar(polarRef) : null), [chartType, polarRef]);
+  const ternaryCal = useMemo(() => (chartType === "ternary" ? computeTernary(ternaryRef) : null), [chartType, ternaryRef]);
+  const converter = xyCal ?? polarCal ?? ternaryCal;
+  const kind: CalibKind = chartType;
+  const calibrated = converter !== null;
 
-  const recomputeGraphs = useCallback(
-    (pts: DigitizedPoint[], conv: typeof converter) => {
-      return pts.map((p) => ({ ...p, graph: screenToGraph(p.screen, conv) }));
-    },
-    [],
-  );
+  // 标定变化（新增/撤销轴点、切换图表类型、切换对数轴）时重新推导所有数据点的图坐标
+  useEffect(() => {
+    setPoints((prev) => prev.map((p) => ({ ...p, graph: screenToGraph(p.screen, converter) })));
+  }, [converter]);
 
   /* ---------------- 导入/导出 ---------------- */
 
@@ -106,7 +105,7 @@ export default function App() {
 
   const handleExport = async () => {
     const csv = toCsv(points, kind);
-    if (!csv.trim()) {
+    if (!points.some((p) => isExportable(p, kind))) {
       setStatus("没有可导出的数据点");
       return;
     }
@@ -160,8 +159,8 @@ export default function App() {
     }
     // 数据点
     if (mode === "curve-point") {
-      const p: DigitizedPoint = { id: nextId(), screen: img, graph: null };
-      setPoints((prev) => recomputeGraphs([...prev, p], converter));
+      const p: DigitizedPoint = { id: nextId(), screen: img, graph: screenToGraph(img, converter) };
+      setPoints((prev) => [...prev, p]);
       const n = points.length + 1;
       setStatus(
         calibrated
@@ -198,7 +197,6 @@ export default function App() {
     setAxisPoints(next);
     setPending(null);
     const c = computeCalibration(next, xScale, yScale);
-    setPoints((prev) => recomputeGraphs(prev, c));
     const n = next.filter((p) => p.axis === axis).length;
     const defined = axis === "x" ? c?.xDefined : c?.yDefined;
     if (c?.xDefined && c?.yDefined) {
@@ -250,9 +248,7 @@ export default function App() {
       return;
     }
     if (axisPoints.length) {
-      const next = axisPoints.slice(0, -1);
-      setAxisPoints(next);
-      setPoints((prev) => recomputeGraphs(prev, computeCalibration(next, xScale, yScale)));
+      setAxisPoints(axisPoints.slice(0, -1));
     }
   };
 
@@ -316,7 +312,8 @@ export default function App() {
 
   const renderOverlay = useCallback(
     (ctx: CanvasRenderingContext2D, toScreen: (p: ScreenPoint) => ScreenPoint) => {
-      // XY 轴点：空心方块（x 橙 / y 青）
+      // XY 轴点：空心方块（x 橙 / y 青）——仅当前图表类型绘制，避免切换后串 overlay
+      if (chartType === "xy") {
       for (const ap of axisPoints) {
         const s = toScreen(ap.screen);
         ctx.strokeStyle = ap.axis === "x" ? "#fb923c" : "#22d3ee";
@@ -326,8 +323,9 @@ export default function App() {
         ctx.font = "12px ui-monospace, monospace";
         ctx.fillText(String(ap.value), s.x + 10, s.y - 10);
       }
+      }
       // 极坐标参考：O 十字 / R 圆圈 / θ 射线
-      if (polarRef.o) {
+      if (chartType === "polar" && polarRef.o) {
         const o = toScreen(polarRef.o);
         ctx.strokeStyle = "#a78bfa";
         ctx.lineWidth = 2;
@@ -344,7 +342,7 @@ export default function App() {
           ctx.arc(rp.x, rp.y, 6, 0, Math.PI * 2);
           ctx.stroke();
           ctx.fillText(`R=${polarRef.r.value}`, rp.x + 10, rp.y - 10);
-          ctx.strokeStyle += "66";
+          ctx.strokeStyle = "#a78bfa66";
           ctx.beginPath();
           ctx.moveTo(o.x, o.y);
           ctx.lineTo(rp.x, rp.y);
@@ -361,7 +359,7 @@ export default function App() {
         }
       }
       // 三元顶点：三角形
-      if (ternaryRef.a && ternaryRef.b && ternaryRef.c) {
+      if (chartType === "ternary" && ternaryRef.a && ternaryRef.b && ternaryRef.c) {
         const [ta, tb, tc] = [toScreen(ternaryRef.a), toScreen(ternaryRef.b), toScreen(ternaryRef.c)];
         ctx.strokeStyle = "#34d39988";
         ctx.beginPath();
@@ -371,6 +369,7 @@ export default function App() {
         ctx.closePath();
         ctx.stroke();
       }
+      if (chartType === "ternary") {
       for (const [ref, label] of [
         [ternaryRef.a, "A"], [ternaryRef.b, "B"], [ternaryRef.c, "C"],
       ] as const) {
@@ -381,6 +380,7 @@ export default function App() {
           ctx.fillText(label, s.x + 8, s.y - 8);
         }
       }
+      }
       // 数据点
       ctx.fillStyle = "#ef4444";
       for (const p of points) {
@@ -390,7 +390,7 @@ export default function App() {
         ctx.fill();
       }
     },
-    [axisPoints, polarRef, ternaryRef, points],
+    [chartType, axisPoints, polarRef, ternaryRef, points],
   );
 
   /* ---------------- 拖拽导入 ---------------- */
@@ -453,7 +453,7 @@ export default function App() {
           <div className="flex items-center gap-1 text-xs">
             <span className="text-neutral-500">X 轴</span>
             <button
-              onClick={() => { setXScale(xScale === "linear" ? "log" : "linear"); setAxisPoints([]); }}
+              onClick={() => { setXScale(xScale === "linear" ? "log" : "linear"); setAxisPoints([]); setPending(null); }}
               className={"rounded px-2 py-1 font-mono " + (xScale === "log" ? "bg-orange-600/30 text-orange-400" : "bg-neutral-800 text-neutral-400")}
               title="切换线性/对数（切换后需重新标定）"
             >
@@ -461,7 +461,7 @@ export default function App() {
             </button>
             <span className="text-neutral-500">Y 轴</span>
             <button
-              onClick={() => { setYScale(yScale === "linear" ? "log" : "linear"); setAxisPoints([]); }}
+              onClick={() => { setYScale(yScale === "linear" ? "log" : "linear"); setAxisPoints([]); setPending(null); }}
               className={"rounded px-2 py-1 font-mono " + (yScale === "log" ? "bg-cyan-600/30 text-cyan-400" : "bg-neutral-800 text-neutral-400")}
             >
               {yScale === "log" ? "log" : "linear"}
@@ -473,7 +473,7 @@ export default function App() {
         </button>
         <button
           onClick={handleExport}
-          disabled={!points.some((p) => p.graph)}
+          disabled={!points.some((p) => isExportable(p, kind))}
           className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           导出 CSV
@@ -529,6 +529,7 @@ export default function App() {
                   value={valueInput}
                   onChange={(e) => setValueInput(e.target.value)}
                   onKeyDown={(e) => {
+                    e.stopPropagation();
                     if (e.key === "Enter") submitValue();
                     if (e.key === "Escape") setPending(null);
                   }}
